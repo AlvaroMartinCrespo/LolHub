@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg: 10 14 26;
+  --surface: 20 26 44;
+  --border: 38 48 76;
+  --fg: 232 236 245;
+  --muted: 148 158 182;
+  --accent: 200 155 60;
+}
+
+body { @apply bg-bg text-fg antialiased; }

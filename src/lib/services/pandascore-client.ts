@@ -55,9 +55,19 @@ async function readPersistentSnapshot(key: string): Promise<{ value: RawResponse
   const snapshot = await createSourceSnapshotStore(config).read<unknown>("pandascore", key);
   if (!snapshot) return null;
   const parsed = cachedResponseSchema.safeParse(snapshot.payload);
-  return parsed.success
-    ? { value: { ...parsed.data, fetchedAt: parsed.data.fetchedAt ?? snapshot.updatedAt }, updatedAt: snapshot.updatedAt }
-    : null;
+  if (!parsed.success || !Object.prototype.hasOwnProperty.call(parsed.data, "body")) return null;
+  return {
+    value: {
+      body: parsed.data.body,
+      page: parsed.data.page,
+      perPage: parsed.data.perPage,
+      total: parsed.data.total,
+      rateLimitRemaining: parsed.data.rateLimitRemaining,
+      fetchedAt: parsed.data.fetchedAt ?? snapshot.updatedAt,
+      staleSince: parsed.data.staleSince,
+    },
+    updatedAt: snapshot.updatedAt,
+  };
 }
 
 function retryDelay(attempt: number, retryAfter: string | null): number {

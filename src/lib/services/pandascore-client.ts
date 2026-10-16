@@ -3,14 +3,26 @@ import type { z } from "zod";
 import { ConfigError, getPandaScoreToken, PANDASCORE_BASE_URL } from "@/lib/config/env";
 import { REVALIDATE, type RevalidateKind } from "@/lib/cache/revalidate";
 import { DataSourceError, isRetryable, kindFromStatus } from "./errors";
-import { markStale } from "./freshness";
+import { markFetched, markStale } from "./freshness";
 import { recall, remember } from "./last-good";
 import { recordFailure, recordSuccess } from "./status";
+import { getSupabaseConfig } from "@/lib/config/env";
+import { createSourceSnapshotStore } from "@/lib/sources/snapshots";
+import { z } from "zod";
 
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 5000;
 const TIMEOUT_MS = 10_000;
+const cachedResponseSchema = z.object({
+  body: z.unknown(),
+  page: z.number().nullable(),
+  perPage: z.number().nullable(),
+  total: z.number().nullable(),
+  rateLimitRemaining: z.number().nullable(),
+  staleSince: z.number().nullable(),
+  fetchedAt: z.string().optional(),
+});
 
 export interface RawResponse {
   body: unknown;
@@ -18,6 +30,8 @@ export interface RawResponse {
   perPage: number | null;
   total: number | null;
   rateLimitRemaining: number | null;
+  /** Instante en que esta aplicación obtuvo la respuesta válida. */
+  fetchedAt: string;
   /** ms epoch de la última descarga válida si esta respuesta es de reserva (datos desactualizados); si no, null */
   staleSince: number | null;
 }
@@ -29,6 +43,23 @@ export interface FetchOptions {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const toInt = (v: string | null) => (v !== null && v !== "" && !Number.isNaN(Number(v)) ? Number(v) : null);
+
+async function savePersistentSnapshot(key: string, value: RawResponse): Promise<void> {
+  const config = getSupabaseConfig();
+  if (!config) return;
+  await createSourceSnapshotStore(config).write("pandascore", key, value, value.fetchedAt);
+}
+
+async function readPersistentSnapshot(key: string): Promise<{ value: RawResponse; updatedAt: string } | null> {
+  const config = getSupabaseConfig();
+  if (!config) return null;
+  const snapshot = await createSourceSnapshotStore(config).read<unknown>("pandascore", key);
+  if (!snapshot) return null;
+  const parsed = cachedResponseSchema.safeParse(snapshot.payload);
+  return parsed.success
+    ? { value: { ...parsed.data, fetchedAt: parsed.data.fetchedAt ?? snapshot.updatedAt }, updatedAt: snapshot.updatedAt }
+    : null;
+}
 
 function retryDelay(attempt: number, retryAfter: string | null): number {
   const fromHeader = toInt(retryAfter);
@@ -77,9 +108,12 @@ export async function pandaScoreFetch(
           perPage: toInt(res.headers.get("x-per-page")),
           total: toInt(res.headers.get("x-total")),
           rateLimitRemaining: toInt(res.headers.get("x-rate-limit-remaining")),
+          fetchedAt: new Date().toISOString(),
           staleSince: null,
         };
+        markFetched("pandascore", Date.parse(raw.fetchedAt));
         remember(url.toString(), raw);
+        await savePersistentSnapshot(url.toString(), raw).catch(() => undefined);
         recordSuccess(raw.rateLimitRemaining);
         return raw;
       }
@@ -100,7 +134,17 @@ export async function pandaScoreFetch(
     const fallback = recall<RawResponse>(url.toString());
     if (fallback) {
       markStale(fallback.savedAt);
-      return { ...fallback.value, staleSince: fallback.savedAt };
+      return { ...fallback.value, fetchedAt: fallback.value.fetchedAt ?? new Date(fallback.savedAt).toISOString(), staleSince: fallback.savedAt };
+    }
+    try {
+      const persisted = await readPersistentSnapshot(url.toString());
+      if (persisted) {
+        const savedAt = Date.parse(persisted.updatedAt);
+        markStale(savedAt);
+        return { ...persisted.value, staleSince: savedAt };
+      }
+    } catch {
+      // Persistence is best effort; retain the original upstream failure if no fallback is available.
     }
   }
   throw failure;

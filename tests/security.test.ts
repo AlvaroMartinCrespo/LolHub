@@ -31,6 +31,7 @@ describe("el token no se expone", () => {
     const mustBeServer = [
       "src/lib/config/env.ts", "src/lib/services/pandascore-client.ts", "src/lib/services/lol.ts",
       "src/lib/services/last-good.ts", "src/lib/services/freshness.ts", "src/lib/services/safe.ts", "src/lib/server/auth.ts",
+      "src/lib/sources/citoapi-quota.ts", "src/lib/sources/oracleselixir-store.ts", "src/lib/sources/snapshots.ts",
     ];
     for (const p of mustBeServer) {
       const f = files.find((x) => x.path === p);

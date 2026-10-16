@@ -53,7 +53,7 @@ De Oracle's Elixir solo guarda la cabecera y 3 filas de muestra: los datos son d
 - El diccionario oficial publicado (2019) usa `player`, `team`, `k`, `d`, `a`, `dmgtochamps`, `patchno`; los CSV recientes usan `playername`, `teamname`, `kills`, `deaths`, `assists`, `damagetochampions`, `patch`, además de `playerid`, `teamid`, `datacomplete`. El diccionario avisa de que la estructura puede cambiar: el adaptador acepta ambos juegos de nombres y exige solo `gameid`, `participantid`, `side`, `result` y `gamelength`.
 - **Unidad de `gamelength`:** el diccionario antiguo dice minutos con centésimas; los CSV recientes parecen usar segundos (no verificado). Es una opción explícita (`gameLengthUnit`, por defecto `seconds`); el adaptador marca como `suspicious_length` las duraciones fuera de 5–90 min en vez de corregirlas, y el auditor sugiere la unidad según la mediana.
 - **Zona horaria de `date`:** no está documentada; por eso el modelo guarda solo `playedOn` (YYYY-MM-DD) y no un instante.
-- `gameid` es único por servidor/liga y puede no serlo entre ligas (según el diccionario): la clave de importación de 12.3.2 debe incluir la liga y el año.
+- `gameid` puede repetirse entre ligas (según el diccionario); por eso las consultas requieren también `league`. La tabla tiene alcance 2025.
 - La URL de descarga actual no se fija en el código (no se pudo verificar): se pasa con `ORACLESELIXIR_CSV_URL` o `--oe-file`.
 - Las estadísticas de partida son propiedad de Riot Games; revisar las condiciones de reutilización y atribuir.
 
@@ -64,11 +64,15 @@ De Oracle's Elixir solo guarda la cabecera y 3 filas de muestra: los datos son d
 | `pandascore.ts` | Modelo del Paso 3 (`Match`, `Team`, `Player`, `League`, `Tournament`, `Standing`, `Page<T>`) + identidades | Envuelve `lol.ts`; consultas por visita permitidas |
 | `citoapi.ts` | `ExternalSeries`, `TeamStint[]` | Solo los 2 endpoints documentados; sin reintentos (cada intento gasta cuota); `ctx` obligatorio |
 | `leaguepedia.ts` | `ExternalTeam[]`, `TeamStint[]` | Detecta el error dentro del 200; sin reintentos; valores de `where` validados |
-| `oracleselixir.ts` | `StatGame[]` (+ avisos) | Puro: recibe el texto del CSV; la descarga y el guardado son de 12.3.2 |
+| `oracleselixir.ts` | `StatGame[]` (+ avisos) | Puro: recibe texto CSV; se usa para auditoría/normalización, no para la carga manual raw de producción |
 | `base.ts` | Contrato `SourceAdapter`, `guardQuery`, `getJson` | `guardQuery` aplica `canQuery` (12.2) y lanza `DataSourceError("blocked")` |
 
 Los tipos internos nuevos están en `src/types/sources.ts`. Los IDs externos son `string` (cada proveedor usa el suyo); cada dato lleva `meta: { source, fetchedAt }`.
 Data Dragon (CDN estático) y la API de Riot (desactivada en 12.2) no tienen adaptador todavía.
+
+## Avance 12.3.2
+
+La migración `supabase/migrations/0003_source_snapshots.sql` crea almacenamiento privado de snapshots por `(source, cache_key)`, con `payload` y `updated_at`. El cliente PandaScore lo usa de forma opcional para recuperar una respuesta ante fallos transitorios si la instancia no tiene una copia en memoria. Los errores de Supabase no sustituyen el error de origen. La migración `0006_oracles_elixir_raw.sql` crea `oracle_elixir_2025`, que se carga manualmente desde el Dashboard y se lee por `gameid` y `league` en `/api/oracle/elixir`.
 
 ## Tabla de equivalencias de IDs (`src/lib/sources/equivalences.ts`)
 

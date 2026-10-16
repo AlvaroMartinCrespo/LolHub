@@ -83,6 +83,17 @@ describe("accesibilidad (axe)", () => {
       </div>,
     );
   });
+  it("el aviso identifica la fuente y diferencia datos frescos de reserva", () => {
+    const { rerender } = render(
+      <StaleNotice sourceLabel="PandaScore" lastUpdatedIso="2026-10-01T10:00:00Z" isStale={false} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Fuente: PandaScore");
+    expect(screen.getByRole("status")).toHaveTextContent("consultado:");
+
+    rerender(<StaleNotice sourceLabel="PandaScore" lastUpdatedIso="2026-10-01T10:00:00Z" isStale />);
+    expect(screen.getByRole("status")).toHaveTextContent("Datos posiblemente desactualizados");
+    expect(screen.getByRole("status")).toHaveTextContent("última copia válida:");
+  });
   it("tablas: clasificación y mapas", async () => {
     const st: Standing[] = [{ rank: 1, team: team(1, "Alpha"), wins: 5, losses: 1, ties: null }];
     await expectAccessible(<div><StandingsTable standings={st} /><GamesList match={done} /></div>);

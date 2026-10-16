@@ -5,8 +5,8 @@ import { blankToNull, makeMeta, type SourceAdapter } from "./base";
 /**
  * Adaptador de Oracle's Elixir. NO es una API: son CSV anuales con una fila por jugador (participantid 1–10)
  * y una por equipo (participantid 100 azul / 200 rojo) y mapa. Este módulo es puro (sin red ni disco): recibe el
- * texto del CSV y devuelve el modelo interno. La descarga y el guardado en base de datos son del script de
- * importación (12.3.2), nunca de la interfaz.
+ * texto del CSV y devuelve el modelo interno. La carga de producción es manual en Supabase y conserva las filas
+ * originales; este parser se reserva para auditoría y normalización futura.
  *
  * Nombres de columna: el diccionario oficial publicado (2019) usa `player`, `team`, `k`, `d`, `a`, `dmgtochamps`…, y avisa
  * de que «la estructura puede cambiar»; los CSV recientes usan `playername`, `teamname`, `kills`, `deaths`, `assists`,

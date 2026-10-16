@@ -1,10 +1,12 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { z } from "zod";
-import { CITOAPI_BASE_URL, ConfigError, getCitoApiKey } from "@/lib/config/env";
+import { CITOAPI_BASE_URL, ConfigError, getCitoApiKey, getSupabaseConfig } from "@/lib/config/env";
 import { DataSourceError } from "@/lib/services/errors";
+import { consumeCitoApiQuota } from "../citoapi-quota";
 import type { EntityIdentity, ExternalSeries, SourceMeta, TeamStint } from "@/types/sources";
-import { kindsOf } from "../routing";
-import { blankToNull, getJson, guardQuery, makeMeta, type FetchLike, type QueryContext, type SourceAdapter } from "./base";
+import { kindsOf, routeFor } from "../routing";
+import { blankToNull, getJson, guardQuery, type FetchLike, type QueryContext, type SourceAdapter } from "./base";
 
 /**
  * Adaptador de CitoAPI (500 llamadas/mes en el plan gratuito → solo para huecos puntuales).
@@ -16,8 +18,8 @@ import { blankToNull, getJson, guardQuery, makeMeta, type FetchLike, type QueryC
  * El resto de endpoints de interés (stats de jugador, roster history, transfers) no tienen ejemplo de respuesta
  * publicado: se auditan con `npm run audit:sources` y se añaden aquí cuando haya una muestra real.
  *
- * Esta capa NO cuenta la cuota: el contador y el bloqueo por margen son el Paso 12.3.3.
- * Mientras tanto la política de 12.2 impide llamarla por visita (`perVisit: false` obligatorio).
+ * Reserva cuota antes de cada consulta real; las respuestas quedan cacheadas según la política de 12.2.
+ * La política impide llamadas por visita (`perVisit: false` obligatorio).
  */
 export const CITOAPI_DOCUMENTED_ENDPOINTS = ["/lol/matches/{id}/games", "/lol/players/{id}/teams"] as const;
 
@@ -108,6 +110,7 @@ export interface CitoApiOptions {
   apiKey?: string;
   baseUrl?: string;
   now?: () => Date;
+  acquireQuota?: () => Promise<void>;
 }
 
 export interface CitoApiAdapter extends SourceAdapter {
@@ -119,6 +122,7 @@ export interface CitoApiAdapter extends SourceAdapter {
 
 export function createCitoApiAdapter(opts: CitoApiOptions = {}): CitoApiAdapter {
   const base = (opts.baseUrl ?? CITOAPI_BASE_URL).replace(/\/+$/, "");
+  const now = opts.now ?? (() => new Date());
   const key = (): string => {
     if (opts.apiKey) return opts.apiKey;
     try {
@@ -128,30 +132,54 @@ export function createCitoApiAdapter(opts: CitoApiOptions = {}): CitoApiAdapter 
       throw e;
     }
   };
+  const acquireQuota = opts.acquireQuota ?? (async () => {
+    let config: ReturnType<typeof getSupabaseConfig>;
+    try {
+      config = getSupabaseConfig();
+    } catch (e) {
+      if (e instanceof ConfigError) throw new DataSourceError("config", e.message);
+      throw e;
+    }
+    if (!config) throw new DataSourceError("config", "Supabase es obligatorio para controlar la cuota de CitoAPI");
+    await consumeCitoApiQuota(config, now(), opts.fetchImpl);
+  });
   // Los identificadores van en la ruta: solo se admiten caracteres seguros.
   const safeId = (id: string): string => {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(id)) throw new DataSourceError("invalid", "Identificador de CitoAPI no válido");
     return encodeURIComponent(id);
   };
-  const call = async (path: string, ctx: QueryContext): Promise<unknown> => {
-    // Cuota de 500/mes: nunca por visita de usuario (política de 12.2).
-    guardQuery("gapFill", ctx);
+  const request = async (path: string): Promise<{ body: unknown; fetchedAt: string }> => {
+    const apiKey = key();
+    await acquireQuota();
     const { body } = await getJson({
       url: new URL(`${base}${path}`),
-      headers: { "x-api-key": key() },
+      headers: { "x-api-key": apiKey },
       fetchImpl: opts.fetchImpl,
       // Sin reintentos automáticos: cada intento gasta cuota.
       retries: 0,
     });
-    return body;
+    return { body, fetchedAt: now().toISOString() };
   };
-  const now = opts.now ?? (() => new Date());
+  const cacheSeconds = routeFor("gapFill").minCacheSeconds;
+  const cachedRequest = opts.fetchImpl || opts.apiKey || opts.acquireQuota
+    ? null
+    : unstable_cache((path: string) => request(path), ["citoapi-gap-fill-v1"], { revalidate: cacheSeconds });
+  const call = async (path: string, ctx: QueryContext): Promise<{ body: unknown; fetchedAt: string }> => {
+    // Cuota de 500/mes: nunca por visita de usuario (política de 12.2).
+    guardQuery("gapFill", ctx);
+    return cachedRequest ? cachedRequest(path) : request(path);
+  };
+  const sourceMeta = (fetchedAt: string): SourceMeta => ({ source: "citoapi", fetchedAt });
   return {
     id: "citoapi",
     kinds: kindsOf("citoapi"),
-    matchGames: async (matchId, ctx) =>
-      normalizeMatchGames(await call(`/lol/matches/${safeId(matchId)}/games`, ctx), makeMeta("citoapi", now)),
-    playerTeams: async (playerId, ctx) =>
-      normalizePlayerTeams(await call(`/lol/players/${safeId(playerId)}/teams`, ctx), makeMeta("citoapi", now)),
+    matchGames: async (matchId, ctx) => {
+      const result = await call(`/lol/matches/${safeId(matchId)}/games`, ctx);
+      return normalizeMatchGames(result.body, sourceMeta(result.fetchedAt));
+    },
+    playerTeams: async (playerId, ctx) => {
+      const result = await call(`/lol/players/${safeId(playerId)}/teams`, ctx);
+      return normalizePlayerTeams(result.body, sourceMeta(result.fetchedAt));
+    },
   };
 }

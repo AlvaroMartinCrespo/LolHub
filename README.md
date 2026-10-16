@@ -15,10 +15,10 @@ npm run dev              # http://localhost:3000
 | Variable | Obligatoria | Uso |
 |---|---|---|
 | `PANDASCORE_API_TOKEN` | Sí | Token de PandaScore. Solo servidor; nunca `NEXT_PUBLIC_*`. |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | No (Paso 12) | Base de datos Supabase. Solo servidor; la service role key salta RLS. |
-| `CITOAPI_KEY`, `RIOT_API_KEY` | No (Paso 12) | Fuentes opcionales. Solo servidor. |
-| `ORACLESELIXIR_CSV_URL` | No (Paso 12) | URL https o ruta del CSV anual de Oracle's Elixir (auditoría e importación). |
-| `CRON_SECRET` | Solo para `/api/cron/warm` y `/api/health` | Aleatorio, ≥ 16 caracteres. |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | No para el hub base | Requeridas para snapshots, archivo histórico, Oracle y control de cuota CitoAPI. Solo servidor; la service role key salta RLS. |
+| `CITOAPI_KEY` | No (Paso 12) | CitoAPI opcional para huecos puntuales. Solo servidor; requiere Supabase para controlar cuota. |
+| `ORACLESELIXIR_CSV_URL` | No (auditoría) | URL opcional para el script de auditoría; los datos de producción se importan desde Supabase Table Editor. |
+| `CRON_SECRET` | Para `/api/cron/*` y `/api/health` | Aleatorio, ≥ 16 caracteres. |
 
 ## Scripts
 | Comando | Acción |
@@ -55,7 +55,7 @@ Vercel: importa el repositorio, define las variables de entorno y despliega (`ve
 - [x] Paso 9 — Actualización automática y despliegue
 - [x] Paso 10 — Calidad final
 - [x] Paso 11 — Segunda etapa (opcional)
-- [~] Paso 12 — Varias fuentes (coste 0 €): **12.1, 12.2 y 12.3.1 hechos** (catálogo, reparto, `/fuentes`, esquema Supabase, adaptadores, auditoría y equivalencias de IDs); 12.3.2–12.5 pendientes → `docs/fuentes-datos.md`, `docs/02-auditoria-fuentes.md`
+- [~] Paso 12 — Varias fuentes (coste 0 €): 12.1–12.3.1 hechos; 12.3.2–12.3.3 en progreso (snapshots, importación Oracle, caché y control de cuota); 12.4–12.5 parciales → `docs/fuentes-datos.md`, `docs/02-auditoria-fuentes.md`
 
 ## Puesta en marcha (histórico del Paso 2)
 ```bash
@@ -177,14 +177,15 @@ Rutas (renderizadas en servidor, con `loading.tsx` y `not-found.tsx`):
 Guía completa en `docs/despliegue.md`.
 - **Vercel**: `vercel.json` incluido; variables `PANDASCORE_API_TOKEN` y `CRON_SECRET` (ver `.env.example`).
 - **Caché por tipo de dato** (`src/lib/cache/revalidate.ts`): directos 30 s, ficha 60 s, próximos 5 min, resultados/catálogo 1 h, historial 24 h; los datos se renuevan sin redesplegar.
-- **Cron** (`/api/cron/warm`, diario 06:00 UTC): precalienta la caché; idempotente y protegido con `CRON_SECRET`. En Hobby los cron solo pueden ser diarios (según la documentación de Vercel).
-- **Base de datos**: no incluida; criterios para añadirla en `docs/despliegue.md`.
-- **Datos de reserva**: si PandaScore falla (429/5xx/red) tras 3 reintentos, se sirven los últimos datos válidos con el aviso «Datos posiblemente desactualizados» (`FreshnessNotice`). 401/403/404 no se enmascaran.
+- **Cron**: `/api/cron/warm` (06:00 UTC) precalienta PandaScore con `CRON_SECRET`.
+- **Oracle's Elixir**: importa el CSV desde Table Editor a `oracle_elixir_2025` (requiere migración `0006_oracles_elixir_raw.sql`); consulta filas por mapa en `/api/oracle/elixir?gameid=...&league=...`.
+- **Base de datos**: Supabase opcional; aplica también `0007_match_results_archive.sql` para guardar los resultados consultados y habilitar `/archivo`.
+- **Datos de reserva**: si PandaScore falla (429/5xx/red) tras 3 reintentos, se sirven los últimos datos válidos en memoria o, si está configurado, desde Supabase (`source_snapshots`, migración `0003_source_snapshots.sql`); la interfaz muestra fuente, fecha y aviso de obsolescencia. 401/403/404 no se enmascaran.
 - **Salud**: `/api/health` (estado de PandaScore y cuota restante, protegido).
 - **Pruebas en producción**: `npm run check:prod` (ver `docs/despliegue.md`).
 
 ### Limitaciones del Paso 9
-- El respaldo de «últimos datos válidos» está **en memoria de cada instancia** serverless (best effort): se pierde al reciclarse y no se comparte. La persistencia real requiere base de datos (no incluida).
+- Sin Supabase configurado, el respaldo de «últimos datos válidos» está en memoria de cada instancia serverless y se pierde al reciclarla. Con Supabase, snapshots se comparten entre instancias.
 - El cron diario es solo apoyo; la frescura real la dan los tiempos de revalidación al visitar la web. Frecuencias mayores requieren Vercel Pro (comprobar límites vigentes antes de cambiar `vercel.json`).
 - Datos en directo reales dependen de que tu plan de PandaScore los incluya (por verificar con `npm run audit`).
 - Verificado: TypeScript, build, rutas protegidas (401/503), lógica de reintentos y datos de reserva con `fetch` simulado (500, red, 401, sin copia previa) y el script `check:prod` contra un servidor local sin token (las comprobaciones contra PandaScore fallan ahí, como se espera). **No** se ha probado en Vercel ni contra la API real (requiere tu token y despliegue); las pruebas de errores y cuota en producción están descritas pero debes ejecutarlas tú. 

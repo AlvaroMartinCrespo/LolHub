@@ -40,6 +40,8 @@ export interface JsonRequest {
   timeoutMs?: number;
   /** Reintentos adicionales en 429/5xx/red (progresivos). Por defecto 2 (3 intentos). */
   retries?: number;
+  /** Revalidación de Next en segundos; sin valor se fuerza no-store. */
+  cacheSeconds?: number;
   baseDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -52,6 +54,10 @@ export async function getJson(req: JsonRequest): Promise<{ body: unknown; status
   const sleep = req.sleep ?? defaultSleep;
   const attempts = (req.retries ?? 2) + 1;
   const base = req.baseDelayMs ?? 500;
+  const cacheOptions: RequestInit & { next?: { revalidate: number } } =
+    req.cacheSeconds && req.cacheSeconds > 0
+      ? { next: { revalidate: req.cacheSeconds } }
+      : { cache: "no-store" };
   let last: DataSourceError | undefined;
   for (let attempt = 0; attempt < attempts; attempt++) {
     let retryAfterMs: number | null = null;
@@ -59,7 +65,7 @@ export async function getJson(req: JsonRequest): Promise<{ body: unknown; status
       const res = await doFetch(req.url, {
         headers: { Accept: "application/json", ...req.headers },
         signal: AbortSignal.timeout(req.timeoutMs ?? 10_000),
-        cache: "no-store",
+        ...cacheOptions,
       });
       if (res.ok) {
         try {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { LEAGUEPEDIA_API_URL } from "@/lib/config/env";
 import { DataSourceError } from "@/lib/services/errors";
 import type { EntityIdentity, ExternalTeam, SourceMeta, TeamStint } from "@/types/sources";
-import { kindsOf } from "../routing";
+import { kindsOf, routeFor } from "../routing";
 import { blankToNull, getJson, guardQuery, makeMeta, type FetchLike, type QueryContext, type SourceAdapter } from "./base";
 
 /**
@@ -144,7 +144,13 @@ export function createLeaguepediaAdapter(opts: LeaguepediaOptions = {}): Leaguep
     url.searchParams.set("limit", String(limit));
     // `maxlag` es la cortesía que Fandom pide a los bots: si la réplica va retrasada, el servidor rechaza la consulta.
     url.searchParams.set("maxlag", "5");
-    const { body } = await getJson({ url, fetchImpl: opts.fetchImpl, retries: 0 });
+    const kind = table === "Teams" ? "teamLogos" : "rosters";
+    const { body } = await getJson({
+      url,
+      fetchImpl: opts.fetchImpl,
+      retries: 0,
+      cacheSeconds: routeFor(kind).minCacheSeconds,
+    });
     return body;
   };
   const teamFields = [...LEAGUEPEDIA_FIELDS.Teams.verified];

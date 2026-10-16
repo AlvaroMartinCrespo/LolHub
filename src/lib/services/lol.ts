@@ -7,6 +7,7 @@ import { normalizeLeague, normalizePlayer, normalizeStanding, normalizeTeam, nor
 import { normalizeMatch } from "@/lib/transform/match";
 import type { RevalidateKind } from "@/lib/cache/revalidate";
 import { pandaScoreFetch, parseList, parseOne } from "./pandascore-client";
+import { archiveFinishedMatches } from "@/lib/sources/result-archive";
 import type { z } from "zod";
 
 export interface ListOptions {
@@ -59,11 +60,17 @@ export const getUpcomingMatches = (o?: ListOptions): Promise<Page<Match>> =>
 export const getRunningMatches = (o?: ListOptions): Promise<Page<Match>> =>
   list("/lol/matches/running", psMatchSchema, normalizeMatch, "running", o);
 
-export const getRecentMatches = (o?: ListOptions, kind: RevalidateKind = "finished"): Promise<Page<Match>> =>
-  list("/lol/matches/past", psMatchSchema, normalizeMatch, kind, { ...o, sort: "-end_at" });
+export async function getRecentMatches(o?: ListOptions, kind: RevalidateKind = "finished"): Promise<Page<Match>> {
+  const page = await list("/lol/matches/past", psMatchSchema, normalizeMatch, kind, { ...o, sort: "-end_at" });
+  await archiveFinishedMatches(page.items);
+  return page;
+}
 
-export const getMatch = (id: number): Promise<Match> =>
-  one(`/lol/matches/${id}`, psMatchSchema, normalizeMatch, "detail");
+export async function getMatch(id: number): Promise<Match> {
+  const match = await one(`/lol/matches/${id}`, psMatchSchema, normalizeMatch, "detail");
+  await archiveFinishedMatches([match]);
+  return match;
+}
 
 // ── Equipos y jugadores ────────────────────────────────────
 export const getTeam = (id: number): Promise<Team> =>
@@ -114,6 +121,7 @@ export async function getTeamHistory(id: number, maxPages = 3): Promise<TeamHist
     if (!full) break;
     if (page === maxPages) truncated = true;
   }
+  await archiveFinishedMatches(matches);
   return { matches, truncated };
 }
 

@@ -19,7 +19,10 @@ No se usa la API de lolesports de Riot: no está documentada y su clave pública
 - Tablas: `data_sources` (catálogo) y `source_quota_usage` (contador por fuente y periodo; función atómica `bump_source_quota`).
 - RLS activado **sin políticas**: solo accede el servidor con `SUPABASE_SERVICE_ROLE_KEY`. Esa clave nunca va al navegador ni a `NEXT_PUBLIC_*`.
 - Convención para las tablas de datos de 12.3: columnas `source` (id de `data_sources`) y `updated_at`.
-- Variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (opcionales: sin ellas la web sigue funcionando solo con PandaScore), `CITOAPI_KEY`, `RIOT_API_KEY`.
+- Variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (opcionales: sin ellas la web sigue funcionando solo con PandaScore), `CITOAPI_KEY` y `CRON_SECRET`. `ORACLESELIXIR_CSV_URL` solo se usa opcionalmente en el script de auditoría. No se requiere `RIOT_API_KEY`: esa integración está desactivada y no cubre esports profesional.
+- Tabla Oracle 2025: aplica `supabase/migrations/0006_oracles_elixir_raw.sql`; después usa Table Editor → `oracle_elixir_2025` → Insert → Import Data from CSV. Los encabezados coinciden con el archivo y se almacenan como texto. Consulta con `/api/oracle/elixir?gameid=<gameid>&league=<league>` porque `gameid` puede repetirse entre ligas.
+- Archivo de resultados: aplica `supabase/migrations/0007_match_results_archive.sql`. Cada consulta de resultados conserva partidos finalizados en Supabase mediante upsert; el historial se consulta en `/archivo`, separado por liga.
+- El CSV importador de Supabase Dashboard admite hasta 100 MB; el plan Free tiene 500 MB de base de datos. Revisa el uso existente y el tamaño tras importarlo; no es una carga a Storage.
 
 ## Reparto de responsabilidades (12.2)
 Código: `src/lib/sources/routing.ts`. Cada tipo de dato tiene una única fuente, un modo de entrega y reglas:
@@ -40,15 +43,16 @@ Detalle completo, formatos y estado de verificación: `docs/02-auditoria-fuentes
 - Adaptadores en `src/lib/sources/adapters/` (`pandascore`, `citoapi`, `leaguepedia`, `oracleselixir`), todos con el contrato `SourceAdapter` y la política de 12.2 (`guardQuery`). Modelo interno nuevo en `src/types/sources.ts`.
 - Auditoría: `npm run audit:sources` (CitoAPI con presupuesto de llamadas, Leaguepedia con espera entre consultas, Oracle's Elixir desde CSV).
 - Equivalencias de IDs: `src/lib/sources/equivalences.ts`, `data/equivalences.json` y migración `0002_entity_equivalences.sql`. El ID canónico es el de PandaScore y solo lo **confirmado por una persona** resuelve.
-- Variables nuevas: `ORACLESELIXIR_CSV_URL` (opcional; URL https o ruta del CSV).
+- `ORACLESELIXIR_CSV_URL` solo sirve para que `scripts/audit-sources.mjs` pueda auditar un CSV remoto; la importación de producción se hace directamente en la tabla.
 
 ## Estado
 - Hecho (12.1 y 12.2): catálogo, reparto de responsabilidades con reglas ejecutables, página de atribución con aviso de Riot, esquema Supabase, variables de entorno, pruebas.
 - Hecho (12.3.1): adaptadores por proveedor, script de auditoría, tabla de equivalencias con revisión obligatoria y pruebas (59 nuevas).
-- Pendiente (12.3.2–12.5): capa de unificación, `source`/`updated_at` en la interfaz, importación programada de Oracle's Elixir, contador de CitoAPI y gestión del límite de Leaguepedia (esperas, cuenta bot), comprobaciones previas a publicar.
+- En progreso (12.3): snapshots y fallback PandaScore, resolver central, tabla Oracle 2025 importable desde Dashboard con endpoint de lectura, caché diaria Leaguepedia y caché de siete días CitoAPI. CitoAPI reserva cuota atómicamente con umbral 475/500. Pendiente: aplicar migraciones, probar la importación real, atribución por dato, control distribuido de tasa Leaguepedia y revisiones de 12.5.
 - Limitaciones de 12.3.1:
   - **Ningún endpoint real de CitoAPI, Leaguepedia ni Oracle's Elixir se ha probado** (el entorno de desarrollo no tiene acceso de red a esos hosts). Los esquemas se basan en la documentación y ejemplos públicos; ejecuta `npm run audit:sources` y contrasta.
   - Leaguepedia: `DateJoin`, `DateLeave` y `Role` de `Tenures` están sin verificar; sin cuenta bot el acceso anónimo es muy lento.
   - CitoAPI: solo 2 endpoints con ejemplo de respuesta publicado; el resto sigue pendiente.
-  - Oracle's Elixir: la unidad de `gamelength` y la zona horaria de `date` están sin confirmar; no hay URL de descarga fijada.
+  - Oracle's Elixir: la unidad de `gamelength` y la zona horaria de `date` están sin confirmar; la tarea exige configurar explícitamente la unidad y la URL HTTPS de descarga.
   - La tabla de equivalencias está vacía: ninguna equivalencia se ha confirmado todavía.
+  - La persistencia de snapshots solo cubre respuestas PandaScore usadas por su cliente; el resolver central aún no ejecuta consultas ni fallback común, y las demás fuentes no pasan por una capa de lectura persistente común.

@@ -28,12 +28,6 @@ export function getCitoApiKey(): string {
   return key;
 }
 
-/** Origen del CSV de Oracle's Elixir: URL https o ruta local. null si no está configurado. */
-export function getOraclesElixirSource(): string | null {
-  const v = process.env.ORACLESELIXIR_CSV_URL?.trim();
-  return v ? v : null;
-}
-
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);

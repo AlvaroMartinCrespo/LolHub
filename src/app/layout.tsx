@@ -26,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/" className="hover:text-accent">Inicio</Link>
               <Link href="/calendario" className="hover:text-accent">Calendario</Link>
               <Link href="/competiciones" className="hover:text-accent">Competiciones</Link>
+              <Link href="/archivo" className="hover:text-accent">Archivo</Link>
               <Link href="/internacionales" className="hover:text-accent">Worlds/MSI</Link>
               <Link href="/comparar" className="hover:text-accent">Comparar</Link>
               <Link href="/favoritos" className="hover:text-accent">Favoritos</Link>

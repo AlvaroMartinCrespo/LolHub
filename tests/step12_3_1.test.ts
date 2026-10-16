@@ -6,6 +6,7 @@ import { DataSourceError } from "@/lib/services/errors";
 import { kindsOf } from "@/lib/sources/routing";
 import { SOURCE_IDS } from "@/lib/sources/catalog";
 import { getAdapters } from "@/lib/sources/adapters";
+import { CITOAPI_CALL_LIMIT, consumeCitoApiQuota } from "@/lib/sources/citoapi-quota";
 import { guardQuery, normalizeKey, getJson } from "@/lib/sources/adapters/base";
 import {
   createCitoApiAdapter, normalizeMatchGames, normalizePlayerTeams, stintIdentities, CITOAPI_DOCUMENTED_ENDPOINTS,
@@ -140,7 +141,8 @@ describe("adaptador CitoAPI", () => {
   });
   it("envía la clave en cabecera, sin reintentos, y bloquea llamadas por visita", async () => {
     const f = vi.fn().mockResolvedValue(json(citoGames));
-    const a = createCitoApiAdapter({ fetchImpl: f, apiKey: "secreto-123", now: NOW });
+    const acquireQuota = vi.fn().mockResolvedValue(undefined);
+    const a = createCitoApiAdapter({ fetchImpl: f, apiKey: "secreto-123", now: NOW, acquireQuota });
     const s = await a.matchGames("115548128963037541", { perVisit: false });
     expect(s.meta).toEqual({ source: "citoapi", fetchedAt: "2026-10-16T10:00:00.000Z" });
     const [calledUrl, init] = f.mock.calls[0];
@@ -149,12 +151,23 @@ describe("adaptador CitoAPI", () => {
     expect(String(calledUrl)).not.toContain("secreto");
     await expect(a.matchGames("1", { perVisit: true })).rejects.toMatchObject({ kind: "blocked" });
     expect(f).toHaveBeenCalledTimes(1);
+    expect(acquireQuota).toHaveBeenCalledTimes(1);
   });
   it("no reintenta en 5xx (cada intento gasta cuota)", async () => {
     const f = vi.fn().mockResolvedValue(json({}, 503));
-    const a = createCitoApiAdapter({ fetchImpl: f, apiKey: "k" });
+    const a = createCitoApiAdapter({ fetchImpl: f, apiKey: "k", acquireQuota: async () => {} });
     await expect(a.playerTeams("abc", { perVisit: false })).rejects.toMatchObject({ kind: "server" });
     expect(f).toHaveBeenCalledTimes(1);
+  });
+  it("no llama al proveedor cuando la cuota llega al margen de seguridad", async () => {
+    const f = vi.fn();
+    const a = createCitoApiAdapter({
+      fetchImpl: f,
+      apiKey: "k",
+      acquireQuota: async () => { throw new DataSourceError("rate_limited", "Cuota agotada"); },
+    });
+    await expect(a.matchGames("1", { perVisit: false })).rejects.toMatchObject({ kind: "rate_limited" });
+    expect(f).not.toHaveBeenCalled();
   });
   it("rechaza IDs con caracteres peligrosos antes de llamar", async () => {
     const f = vi.fn();
@@ -171,6 +184,28 @@ describe("adaptador CitoAPI", () => {
   });
   it("solo declara como documentados los endpoints con ejemplo de respuesta", () => {
     expect([...CITOAPI_DOCUMENTED_ENDPOINTS]).toEqual(["/lol/matches/{id}/games", "/lol/players/{id}/teams"]);
+  });
+});
+
+describe("contador de cuota CitoAPI", () => {
+  const config = { url: "https://db.example", serviceRoleKey: "server-secret" };
+
+  it("reserva de forma atómica y deja margen respecto a las 500 llamadas", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json(12));
+    const calls = await consumeCitoApiQuota(config, new Date("2026-10-16T12:00:00Z"), fetchImpl);
+    const [requestUrl, init] = fetchImpl.mock.calls[0];
+
+    expect(calls).toBe(12);
+    expect(CITOAPI_CALL_LIMIT).toBe(475);
+    expect(String(requestUrl)).toBe("https://db.example/rest/v1/rpc/try_bump_source_quota");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      p_source: "citoapi", p_period: "2026-10-01", p_by: 1, p_limit: 475,
+    });
+  });
+
+  it("bloquea cuando la reserva atómica devuelve null", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json(null));
+    await expect(consumeCitoApiQuota(config, NOW(), fetchImpl)).rejects.toMatchObject({ kind: "rate_limited" });
   });
 });
 
@@ -235,6 +270,7 @@ describe("adaptador Leaguepedia", () => {
     expect(u.searchParams.get("limit")).toBe(String(ANON_ROW_LIMIT));
     expect(u.searchParams.get("maxlag")).toBe("5");
     expect(u.searchParams.get("fields")!.split(",").sort()).toEqual([...LEAGUEPEDIA_FIELDS.Teams.verified].sort());
+    expect((f.mock.calls[0][1] as RequestInit & { next?: { revalidate: number } }).next).toEqual({ revalidate: 86_400 });
   });
   it("tenencias: pide también los campos pendientes de verificar y los marca como tales", async () => {
     const f = vi.fn().mockResolvedValue(json(lpTenures));

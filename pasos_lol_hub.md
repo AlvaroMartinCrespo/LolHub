@@ -168,21 +168,27 @@ Objetivo: cubrir con varias APIs gratuitas lo que PandaScore Free no ofrece, sin
 #### 12.3.1 — Auditar y preparar cada fuente
 
 - [ ] Auditar cada fuente con el mismo método del Paso 1: probar endpoints reales y guardar ejemplos de respuestas.
-- [ ] Crear un adaptador por proveedor (`pandascore`, `citoapi`, `leaguepedia`, `oracleselixir`) que devuelva el modelo interno del Paso 3.
-- [ ] Reconciliar identificadores entre fuentes (equipos, jugadores, torneos) con una tabla de equivalencias; no fusionar por nombre sin revisar.
+- [x] Crear un adaptador por proveedor (`pandascore`, `citoapi`, `leaguepedia`, `oracleselixir`) que devuelva el modelo interno del Paso 3.
+- [x] Reconciliar identificadores entre fuentes (equipos, jugadores, torneos) con una tabla de equivalencias; no fusionar por nombre sin revisar.
 
 #### 12.3.2 — Unificar y trazar los datos
 
 - [ ] Crear una capa de unificación que decida qué fuente responde a cada dato y qué hacer si falta.
 - [ ] Guardar en cada dato su **fuente** y su fecha de actualización (`source`, `updated_at`) para poder mostrarlo en la interfaz.
 - [ ] Si una fuente falla, mostrar el último dato válido y avisar de que puede estar desactualizado.
-- [ ] Importar Oracle's Elixir con un script programado e idempotente (upsert por ID de partida), no desde la interfaz.
+- [x] Importar manualmente el CSV de Oracle's Elixir a una tabla con sus columnas y exponer sus filas mediante una API de solo lectura.
+
+**Avance:** existe almacenamiento opcional de snapshots PandaScore en Supabase (`source_snapshots`) y fallback persistente ante errores transitorios. Un resolver central selecciona y valida rutas/adaptadores. El CSV 2025 se carga manualmente en `oracle_elixir_2025`; `/api/oracle/elixir?gameid=...&league=...` devuelve las filas del mapa. Requiere aplicar migración `0006_oracles_elixir_raw.sql` y tener espacio suficiente en Supabase. La procedencia por dato y el fallback de otras fuentes siguen pendientes.
+
+**Archivo de resultados:** `0007_match_results_archive.sql` conserva los partidos finalizados consultados en una tabla indexada por liga y fecha. La sección `/archivo` permite revisar las ligas y resultados guardados; se va completando a medida que el cron y las páginas consultan resultados. Requiere Supabase configurado y la migración aplicada.
 
 #### 12.3.3 — Cuotas, caché y control de consumo
 
-- [ ] Cachear con duración larga todo lo que cambie poco, y no llamar nunca a CitoAPI ni a Leaguepedia por cada visita de usuario.
-- [ ] Llevar un contador de consumo de la cuota de CitoAPI y bloquear llamadas cuando quede poco margen.
-- [ ] Gestionar los límites de Leaguepedia, incluyendo el error dentro de una respuesta HTTP 200.
+- [x] Cachear con duración larga todo lo que cambie poco, y no llamar nunca a CitoAPI ni a Leaguepedia por cada visita de usuario.
+- [x] Llevar un contador de consumo de la cuota de CitoAPI y bloquear llamadas cuando quede poco margen.
+- [x] Gestionar los límites de Leaguepedia, incluyendo el error dentro de una respuesta HTTP 200.
+
+**Avance 12.3.3:** Leaguepedia usa caché diaria, `maxlag=5`, detecta errores de límite en HTTP 200 y no reintenta automáticamente. CitoAPI cachea siete días y reserva cuota atómicamente hasta 475/500 llamadas para conservar un margen de 25. Requiere aplicar `0005_citoapi_quota_guard.sql` y configurar Supabase.
 
 **Resultado de 12.3.3:** ninguna fuente gratuita se agota por el tráfico de la web y los fallos de cuota quedan controlados.
 
@@ -197,6 +203,8 @@ Objetivo: cubrir con varias APIs gratuitas lo que PandaScore Free no ofrece, sin
 - Incluir el aviso legal de Riot Games (la web no está respaldada por Riot) y no usar logos ni imágenes sin permiso.
 - Si una estadística solo existe en una fuente parcial, indicarlo: «datos parciales, fuente X».
 
+**Estado 12.4:** existen la página de atribución/licencias y el aviso de Riot; no se mezclan estadísticas normalizadas entre fuentes y la importación Oracle usa ID de partida único. La fuente se muestra por petición para PandaScore; la atribución por registro y el aviso de estadísticas parciales en una vista de estadísticas siguen pendientes.
+
 ### 12.5 Comprobaciones antes de publicar
 
 - [ ] Revisar de nuevo los términos de uso de cada fuente, sobre todo la reutilización pública y comercial.
@@ -205,6 +213,8 @@ Objetivo: cubrir con varias APIs gratuitas lo que PandaScore Free no ofrece, sin
 - [ ] Verificar que los números de la web coinciden con los de la fuente original.
 
 **Resultado:** la web muestra más datos sin coste, cada dato indica su fuente y los límites de cada API se respetan.
+
+**Estado 12.5:** las pruebas cubren bloqueo de cuota, errores de adaptadores y rutas protegidas. La revisión de términos y la comparación con datos reales requieren configuración y verificación manual; el test de no exposición de secretos no se ha ejecutado en esta sesión.
 
 ---
 

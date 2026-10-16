@@ -112,11 +112,13 @@ describe("cliente PandaScore", () => {
     mockFetch({ body: [{ id: 7 }] });
     const fresh = await run(pandaScoreFetch("/lol/reserva"));
     expect(fresh.staleSince).toBeNull();
+    expect(fresh.fetchedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
 
     mockFetch({ status: 500 });
     const stale = await run(pandaScoreFetch("/lol/reserva"));
     expect(stale.body).toEqual([{ id: 7 }]);
     expect(stale.staleSince).not.toBeNull();
+    expect(stale.fetchedAt).toBe(fresh.fetchedAt);
 
     mockFetch({ status: 401 });
     await expect(run(pandaScoreFetch("/lol/reserva"))).rejects.toMatchObject({ kind: "unauthorized" });

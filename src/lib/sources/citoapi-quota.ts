@@ -6,10 +6,12 @@ export const CITOAPI_MONTHLY_LIMIT = 500;
 export const CITOAPI_RESERVED_CALLS = 25;
 export const CITOAPI_CALL_LIMIT = CITOAPI_MONTHLY_LIMIT - CITOAPI_RESERVED_CALLS;
 
+type QuotaFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
 export async function consumeCitoApiQuota(
   config: SnapshotStoreConfig,
   now: Date = new Date(),
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: QuotaFetch = fetch,
 ): Promise<number> {
   const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
   let response: Response;

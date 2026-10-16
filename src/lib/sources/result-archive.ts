@@ -42,7 +42,7 @@ export function createResultArchiveStore(
       if (finished.length === 0) return;
       const updatedAt = new Date().toISOString();
 
-      const latestByLeague = new Map<number, ArchivedLeague & { last_result_at: string | null }>();
+      const latestByLeague = new Map<number, ArchivedLeague & { update_at: string | null }>();
       for (const match of finished) {
         if (!match.league) continue;
         const date = match.endTime ?? match.startTime;
